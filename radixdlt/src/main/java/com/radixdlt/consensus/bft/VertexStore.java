@@ -28,6 +28,7 @@ import com.radixdlt.counters.SystemCounters.CounterType;
 import com.google.common.hash.HashCode;
 
 import com.google.common.collect.ImmutableList;
+import com.radixdlt.environment.EventDispatcher;
 import com.radixdlt.utils.Pair;
 
 import java.util.HashMap;
@@ -46,18 +47,15 @@ import javax.annotation.concurrent.NotThreadSafe;
  */
 @NotThreadSafe
 public final class VertexStore {
-	// TODO: combine all of the following senders as an update sender
-	public interface BFTUpdateSender {
-		void sendBFTUpdate(BFTUpdate bftUpdate);
-	}
 
+	// TODO: combine all of the following senders as an update sender
 	public interface VertexStoreEventSender {
-		void sendCommitted(BFTCommittedUpdate committedUpdate);
 		void highQC(QuorumCertificate qc);
 	}
 
 	private final VertexStoreEventSender vertexStoreEventSender;
-	private final BFTUpdateSender bftUpdateSender;
+	private final EventDispatcher<BFTUpdate> bftUpdateDispatcher;
+	private final EventDispatcher<BFTCommittedUpdate> bftCommittedDispatcher;
 	private final Ledger ledger;
 	private final SystemCounters counters;
 
@@ -73,13 +71,15 @@ public final class VertexStore {
 		Ledger ledger,
 		VerifiedVertex rootVertex,
 		QuorumCertificate rootQC,
-		BFTUpdateSender bftUpdateSender,
+		EventDispatcher<BFTUpdate> bftUpdateDispatcher,
+		EventDispatcher<BFTCommittedUpdate> bftCommittedDispatcher,
 		VertexStoreEventSender vertexStoreEventSender,
 		SystemCounters counters
 	) {
 		this.ledger = Objects.requireNonNull(ledger);
 		this.vertexStoreEventSender = Objects.requireNonNull(vertexStoreEventSender);
-		this.bftUpdateSender = Objects.requireNonNull(bftUpdateSender);
+		this.bftUpdateDispatcher = Objects.requireNonNull(bftUpdateDispatcher);
+		this.bftCommittedDispatcher = Objects.requireNonNull(bftCommittedDispatcher);
 		this.counters = Objects.requireNonNull(counters);
 		this.rootVertex = Objects.requireNonNull(rootVertex);
 		this.highestQC = Objects.requireNonNull(rootQC);
@@ -90,7 +90,8 @@ public final class VertexStore {
 		VerifiedVertex rootVertex,
 		QuorumCertificate rootQC,
 		Ledger ledger,
-		BFTUpdateSender bftUpdateSender,
+		EventDispatcher<BFTUpdate> bftUpdateDispatcher,
+		EventDispatcher<BFTCommittedUpdate> bftCommittedDispatcher,
 		VertexStoreEventSender vertexStoreEventSender,
 		SystemCounters counters
 	) {
@@ -110,7 +111,8 @@ public final class VertexStore {
 			ledger,
 			rootVertex,
 			rootQC,
-			bftUpdateSender,
+			bftUpdateDispatcher,
+			bftCommittedDispatcher,
 			vertexStoreEventSender,
 			counters
 		);
@@ -141,8 +143,9 @@ public final class VertexStore {
 		this.vertexStoreEventSender.highQC(rootQC);
 		this.highestCommittedQC = rootCommitQC;
 
-		BFTUpdate bftUpdate = new BFTUpdate(rootVertex);
-		bftUpdateSender.sendBFTUpdate(bftUpdate);
+		// TODO: combine all these bft updates into one
+		BFTUpdate bftUpdate = new BFTUpdate(rootVertex, 0);
+		bftUpdateDispatcher.dispatch(bftUpdate);
 
 		for (VerifiedVertex vertex : vertices) {
 			if (!addQC(vertex.getQC())) {
@@ -226,8 +229,8 @@ public final class VertexStore {
 
 				updateVertexStoreSize();
 
-				final BFTUpdate update = new BFTUpdate(vertex);
-				bftUpdateSender.sendBFTUpdate(update);
+				final BFTUpdate update = new BFTUpdate(vertex, this.vertices.size());
+				bftUpdateDispatcher.dispatch(update);
 			}
 		});
 
@@ -283,8 +286,8 @@ public final class VertexStore {
 		ImmutableSet<HashCode> prunedSet = prunedSetBuilder.build();
 
 		this.counters.add(CounterType.BFT_PROCESSED, path.size());
-		final BFTCommittedUpdate bftCommittedUpdate = new BFTCommittedUpdate(path, highQC);
-		this.vertexStoreEventSender.sendCommitted(bftCommittedUpdate);
+		final BFTCommittedUpdate bftCommittedUpdate = new BFTCommittedUpdate(path, highQC, this.vertices.size());
+		this.bftCommittedDispatcher.dispatch(bftCommittedUpdate);
 
 		this.ledger.commit(path, highQC, prunedSet);
 
@@ -348,6 +351,7 @@ public final class VertexStore {
 		return vertices.size();
 	}
 
+	// TODO: Move counters into DispatcherModule
 	private void updateVertexStoreSize() {
 		this.counters.set(CounterType.BFT_VERTEX_STORE_SIZE, this.vertices.size());
 	}

@@ -17,9 +17,33 @@
 
 package com.radixdlt.consensus.bft;
 
+import com.radixdlt.consensus.QuorumCertificate;
+import java.util.Objects;
+
 /**
- * A processor of BFT updates
+ * A quorum certificate which has been constructed by this node.
  */
-public interface BFTUpdateProcessor {
-	void processBFTUpdate(BFTUpdate update);
+public final class FormedQC {
+	private final QuorumCertificate qc;
+	private final BFTNode lastAuthor;
+
+	private FormedQC(QuorumCertificate qc, BFTNode lastAuthor) {
+		this.qc = qc;
+		this.lastAuthor = lastAuthor;
+	}
+
+	public QuorumCertificate qc() {
+		return qc;
+	}
+
+	public BFTNode lastAuthor() {
+		return lastAuthor;
+	}
+
+	public static FormedQC create(QuorumCertificate qc, BFTNode lastAuthor) {
+		return new FormedQC(
+			Objects.requireNonNull(qc),
+			Objects.requireNonNull(lastAuthor)
+		);
+	}
 }

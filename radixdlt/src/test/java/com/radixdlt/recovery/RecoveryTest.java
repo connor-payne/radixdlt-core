@@ -24,89 +24,66 @@ import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Key;
-import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
-import com.google.inject.name.Names;
-import com.radixdlt.ConsensusModule;
-import com.radixdlt.CryptoModule;
-import com.radixdlt.EpochsConsensusModule;
-import com.radixdlt.EpochsLedgerUpdateModule;
-import com.radixdlt.EpochsSyncModule;
-import com.radixdlt.LedgerCommandGeneratorModule;
-import com.radixdlt.LedgerModule;
-import com.radixdlt.NoFeeModule;
-import com.radixdlt.PersistenceModule;
-import com.radixdlt.RadixEngineModule;
-import com.radixdlt.RadixEngineStoreModule;
-import com.radixdlt.SyncServiceModule;
 import com.radixdlt.atommodel.system.SystemParticle;
 import com.radixdlt.consensus.HashSigner;
 import com.radixdlt.consensus.VerifiedLedgerHeaderAndProof;
 import com.radixdlt.consensus.bft.BFTNode;
-import com.radixdlt.consensus.bft.BFTValidator;
-import com.radixdlt.consensus.bft.BFTValidatorSet;
-import com.radixdlt.consensus.bft.PacemakerMaxExponent;
-import com.radixdlt.consensus.bft.PacemakerRate;
-import com.radixdlt.consensus.bft.PacemakerTimeout;
 import com.radixdlt.consensus.bft.Self;
 import com.radixdlt.consensus.bft.View;
 import com.radixdlt.consensus.epoch.EpochView;
-import com.radixdlt.consensus.sync.BFTSyncPatienceMillis;
-import com.radixdlt.consensus.sync.SyncLedgerRequestSender;
-import com.radixdlt.counters.SystemCounters;
-import com.radixdlt.counters.SystemCountersImpl;
 import com.radixdlt.crypto.ECKeyPair;
-import com.radixdlt.crypto.HashUtils;
 import com.radixdlt.engine.RadixEngine;
 import com.radixdlt.environment.deterministic.DeterministicEpochInfo;
-import com.radixdlt.mempool.EmptyMempool;
-import com.radixdlt.mempool.Mempool;
 import com.radixdlt.environment.deterministic.network.ControlledMessage;
 import com.radixdlt.environment.deterministic.DeterministicEpochsConsensusProcessor;
-import com.radixdlt.environment.deterministic.DeterministicMessageSenderModule;
 import com.radixdlt.environment.deterministic.network.DeterministicNetwork;
-import com.radixdlt.environment.deterministic.DeterministicSenderFactory;
+import com.radixdlt.environment.deterministic.ControlledSenderFactory;
 import com.radixdlt.environment.deterministic.network.MessageMutator;
 import com.radixdlt.environment.deterministic.network.MessageSelector;
-import com.radixdlt.ledger.DtoCommandsAndProof;
-import com.radixdlt.ledger.DtoLedgerHeaderAndProof;
-import com.radixdlt.ledger.VerifiedCommandsAndProof;
 import com.radixdlt.middleware2.LedgerAtom;
 import com.radixdlt.middleware2.store.CommittedAtomsStore;
-import com.radixdlt.network.TimeSupplier;
 import com.radixdlt.properties.RuntimeProperties;
 import com.radixdlt.statecomputer.EpochCeilingView;
-import com.radixdlt.statecomputer.MinValidators;
-import com.radixdlt.statecomputer.RadixEngineStateComputer.CommittedAtomSender;
 import com.radixdlt.store.LastEpochProof;
-import com.radixdlt.sync.LocalSyncServiceAccumulatorProcessor.SyncTimeoutScheduler;
-import com.radixdlt.sync.StateSyncNetworkSender;
-import com.radixdlt.sync.SyncPatienceMillis;
-import com.radixdlt.utils.UInt256;
 import io.reactivex.rxjava3.schedulers.Timed;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 import org.apache.commons.cli.ParseException;
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 /**
  * Verifies that on restarts (simulated via creation of new injectors) that the application
  * state is the same as last seen.
  */
+@RunWith(Parameterized.class)
 public class RecoveryTest {
+
+	@Parameters
+	public static Collection<Object[]> parameters() {
+		return List.of(new Object[][] {
+			{10L}, {1000000L}
+		});
+	}
+
 	@Rule
 	public TemporaryFolder folder = new TemporaryFolder();
 
 	private DeterministicNetwork network;
 	private Injector currentInjector;
 	private ECKeyPair ecKeyPair = ECKeyPair.generateNew();
+	private final long epochCeilingView;
 
-	public RecoveryTest() {
+	public RecoveryTest(long epochCeilingView) {
+		this.epochCeilingView = epochCeilingView;
 		this.network = new DeterministicNetwork(
 			List.of(BFTNode.create(ecKeyPair.getPublicKey())),
 			MessageSelector.firstSelector(),
@@ -129,45 +106,9 @@ public class RecoveryTest {
 				protected void configure() {
 					bind(HashSigner.class).toInstance(ecKeyPair::sign);
 					bind(BFTNode.class).annotatedWith(Self.class).toInstance(self);
-					bindConstant().annotatedWith(Names.named("magic")).to(0);
-					bind(DeterministicSenderFactory.class).toInstance(network::createSender);
-
-					bind(Integer.class).annotatedWith(SyncPatienceMillis.class).toInstance(200);
-					bind(Integer.class).annotatedWith(BFTSyncPatienceMillis.class).toInstance(200);
-					bind(Integer.class).annotatedWith(MinValidators.class).toInstance(1);
-					bind(Long.class).annotatedWith(PacemakerTimeout.class).toInstance(1000L);
-					bind(Double.class).annotatedWith(PacemakerRate.class).toInstance(2.0);
-					bind(Integer.class).annotatedWith(PacemakerMaxExponent.class).toInstance(6);
-					bind(View.class).annotatedWith(EpochCeilingView.class).toInstance(View.of(10L));
-
-					// System
-					bind(Mempool.class).to(EmptyMempool.class);
-					bind(SystemCounters.class).to(SystemCountersImpl.class).in(Scopes.SINGLETON);
-					bind(TimeSupplier.class).toInstance(System::currentTimeMillis);
-
-					// TODO: Move these into DeterministicSender
-					bind(CommittedAtomSender.class).toInstance(atom -> { });
-					bind(SyncLedgerRequestSender.class).toInstance(request -> { });
-					bind(SyncTimeoutScheduler.class).toInstance((syncInProgress, milliseconds) -> { });
-					bind(StateSyncNetworkSender.class).toInstance(new StateSyncNetworkSender() {
-						@Override
-						public void sendSyncRequest(BFTNode node, DtoLedgerHeaderAndProof currentHeader) {
-						}
-
-						@Override
-						public void sendSyncResponse(BFTNode node, DtoCommandsAndProof commandsAndProof) {
-						}
-					});
-
-					// Checkpoint
-					VerifiedLedgerHeaderAndProof genesisLedgerHeader = VerifiedLedgerHeaderAndProof.genesis(
-						HashUtils.zero256(),
-						BFTValidatorSet.from(Stream.of(BFTValidator.from(self, UInt256.ONE)))
-					);
-					bind(VerifiedCommandsAndProof.class).toInstance(new VerifiedCommandsAndProof(
-						ImmutableList.of(),
-						genesisLedgerHeader
-					));
+					bind(new TypeLiteral<List<BFTNode>>() { }).toInstance(ImmutableList.of(self));
+					bind(ControlledSenderFactory.class).toInstance(network::createSender);
+					bind(View.class).annotatedWith(EpochCeilingView.class).toInstance(View.of(epochCeilingView));
 
 					final RuntimeProperties runtimeProperties;
 					// TODO: this constructor/class/inheritance/dependency is horribly broken
@@ -180,35 +121,7 @@ public class RecoveryTest {
 					bind(RuntimeProperties.class).toInstance(runtimeProperties);
 				}
 			},
-
-			new DeterministicMessageSenderModule(),
-
-			// Consensus
-			new CryptoModule(),
-			new ConsensusModule(),
-
-			// Ledger
-			new LedgerModule(),
-			new LedgerCommandGeneratorModule(),
-
-			// Sync
-			new SyncServiceModule(),
-
-			// Epochs - Consensus
-			new EpochsConsensusModule(),
-			// Epochs - Ledger
-			new EpochsLedgerUpdateModule(),
-			// Epochs - Sync
-			new EpochsSyncModule(),
-
-			// State Computer
-			new RadixEngineModule(),
-			new RadixEngineStoreModule(),
-
-			// Fees
-			new NoFeeModule(),
-
-			new PersistenceModule()
+			ModuleForRecoveryTests.create()
 		);
 	}
 
@@ -236,7 +149,7 @@ public class RecoveryTest {
 			Timed<ControlledMessage> msg = this.network.nextMessage();
 			DeterministicEpochsConsensusProcessor runner = currentInjector
 				.getInstance(DeterministicEpochsConsensusProcessor.class);
-			runner.handleMessage(msg.value().message());
+			runner.handleMessage(msg.value().origin(), msg.value().message());
 		}
 	}
 
@@ -287,7 +200,6 @@ public class RecoveryTest {
 			Key.get(VerifiedLedgerHeaderAndProof.class, LastEpochProof.class)
 		);
 		assertThat(restartedEpochProof.isEndOfEpoch()).isTrue();
-		assertThat(restartedEpochProof.getEpoch()).isGreaterThan(1);
 		assertThat(restartedEpochProof.getEpoch()).isEqualTo(epochView.getEpoch() - 1);
 	}
 }

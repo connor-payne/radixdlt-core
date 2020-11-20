@@ -20,6 +20,5 @@ package com.radixdlt.sync;
 import com.radixdlt.sync.LocalSyncServiceAccumulatorProcessor.SyncInProgress;
 
 public interface LocalSyncServiceProcessor {
-	void processLocalSyncRequest(LocalSyncRequest request);
 	void processSyncTimeout(SyncInProgress timeout);
 }

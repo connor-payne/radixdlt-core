@@ -15,11 +15,13 @@
  * language governing permissions and limitations under the License.
  */
 
-package com.radixdlt.consensus.sync;
+package com.radixdlt.environment;
 
 /**
- * Processes timeouts on a given request
+ * A dispatcher of an event to an environment
+ *
+ * @param <T> the event class
  */
-public interface BFTSyncRequestTimeoutProcessor {
-	void processGetVerticesLocalTimeout(LocalGetVerticesRequest request);
+public interface EventDispatcher<T> {
+	void dispatch(T t);
 }

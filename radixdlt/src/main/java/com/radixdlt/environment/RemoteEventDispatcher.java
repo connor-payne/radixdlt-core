@@ -15,24 +15,15 @@
  * language governing permissions and limitations under the License.
  */
 
-package com.radixdlt.sync;
+package com.radixdlt.environment;
 
-import io.reactivex.rxjava3.core.Observable;
+import com.radixdlt.consensus.bft.BFTNode;
 
 /**
- * Messages received from the sync network
+ * Attempts to dispatch an event to a remote node.
+ *
+ * @param <T> the event class
  */
-public interface StateSyncNetworkRx {
-
-	/**
-	 * Retrieve stream of sync responses
-	 * @return an unending Observable of sync responses
-	 */
-	Observable<RemoteSyncResponse> syncResponses();
-
-	/**
-	 * Retrieve stream of sync requests
-	 * @return an unending Observable of sync requests
-	 */
-	Observable<RemoteSyncRequest> syncRequests();
+public interface RemoteEventDispatcher<T> {
+	void dispatch(BFTNode receiver, T t);
 }
